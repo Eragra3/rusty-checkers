@@ -104,8 +104,6 @@ struct Board {
     tiles: Box<[Tile]>,
 }
 
-// todo: add two accessors/iterators, one regular and one for rotated board
-//       this will eliminate the need of having two boards in Game
 impl Board {
     /// Create board with height x width size. You can flip the board to swap players
     fn new(height: usize, width: usize, flip: bool) -> Board {
@@ -173,7 +171,7 @@ impl Board {
     }
 
     /// Get title looking at board from white player perspective
-    pub fn get_tile_white(&self, Index { x, y }: Index) -> Tile {
+    fn get_tile_white(&self, Index { x, y }: Index) -> Tile {
         assert!(x < self.height, "X coordinate is outside board! Got {}", x);
         assert!(y < self.width, "Y coordinate is outside board! Got {}", y);
 
@@ -181,7 +179,7 @@ impl Board {
     }
 
     /// Set title looking at board from white player perspective
-    pub fn set_tile_white(&mut self, Index { x, y }: Index, tile: Tile) {
+    fn set_tile_white(&mut self, Index { x, y }: Index, tile: Tile) {
         assert!(x < self.height, "X coordinate is outside board! Got {}", x);
         assert!(y < self.width, "Y coordinate is outside board! Got {}", y);
 
@@ -189,14 +187,14 @@ impl Board {
     }
 
     /// Get title looking at board from black player perspective
-    pub fn get_tile_black(&self, index: Index) -> Tile {
+    fn get_tile_black(&self, index: Index) -> Tile {
         let reversed_index = Index::new(self.width - index.x - 1, self.height - index.y - 1);
         println!("Index: {:?}, Reversed index: {:?}", index, reversed_index);
         self.get_tile_white(reversed_index)
     }
 
     /// Set title looking at board from black player perspective
-    pub fn set_tile_black(&mut self, index: Index, tile: Tile) {
+    fn set_tile_black(&mut self, index: Index, tile: Tile) {
         let reversed_index = Index::new(self.width - index.x - 1, self.height - index.y - 1);
         println!("Index: {:?}, Reversed index: {:?}", index, reversed_index);
         self.set_tile_white(reversed_index, tile)
@@ -311,11 +309,13 @@ impl Game {
             return err;
         }
 
-        let pawn = self.board.get_tile_white(board_move.source);
+        let pawn = self.board.get_tile(board_move.source, board_move.player);
         // remove pawn from source
-        self.board.set_tile_white(board_move.source, Tile::Empty);
+        self.board
+            .set_tile(board_move.source, Tile::Empty, board_move.player);
         // put pawn in target
-        self.board.set_tile_white(board_move.target, pawn);
+        self.board
+            .set_tile(board_move.target, pawn, board_move.player);
 
         // change turn
         self.change_turn();
@@ -368,38 +368,36 @@ impl Game {
         let game_move = Move::new(
             Index::new(source_horizontal_index, source_vertical_index),
             Index::new(target_horizontal_index, target_vertical_index),
+            Player::White,
         );
 
-        Some(game_move)
+        match self.state {
+            GameState::Turn(Player::White) => Some(game_move),
+            GameState::Turn(Player::Black) => Some(self.reverse_move(&game_move)),
+            _ => panic!("The game has ended already"),
+        }
     }
 
-    pub fn check_move<'a>(&self, game_move_white: Move) -> Result<(), &'a str> {
-        let player = match self.state {
-            GameState::Turn(Player::Black) => Player::Black,
-            GameState::Turn(Player::White) => Player::White,
-            GameState::Won(_) => return Err("The game is already finished"),
-        };
-
-        let game_move = match player {
-            Player::Black => self.reverse_move(&game_move_white),
-            Player::White => game_move_white,
+    pub fn check_move<'a>(&self, game_move: Move) -> Result<(), &'a str> {
+        if let GameState::Won(_) = self.state {
+            return Err("The game is already finished");
         };
 
         println!("Move: {:?}", game_move);
 
         // check if source tile is a pawn
-        let source_tile = match self.board.get_tile(game_move.source, player) {
+        let source_tile = match self.board.get_tile(game_move.source, game_move.player) {
             Tile::Empty => return Err("Source tile is empty"),
             tile => tile,
         };
         // check if target tile is empty
-        match self.board.get_tile(game_move.target, player) {
+        match self.board.get_tile(game_move.target, game_move.player) {
             Tile::Empty => (),
             _ => return Err("Target tile is not empty"),
         };
 
         // check if current turn player is the owner
-        match player {
+        match game_move.player {
             Player::Black => {
                 if source_tile == Tile::White || source_tile == Tile::WhiteKing {
                     return Err("The pawn belongs to other player (white)");
@@ -447,7 +445,11 @@ impl Game {
     fn reverse_move(&self, game_move: &Move) -> Move {
         let source = self.reverse_index(&game_move.source);
         let target = self.reverse_index(&game_move.target);
-        Move { source, target }
+        let player = match game_move.player {
+            Player::White => Player::Black,
+            Player::Black => Player::White,
+        };
+        Move::new(source, target, player)
     }
 
     fn reverse_index(&self, index: &Index) -> Index {
@@ -457,16 +459,23 @@ impl Game {
     }
 }
 
-//TODO: move `player` to this structure and remove it as method parameter
 #[derive(Debug, Clone, Copy)]
 struct Move {
+    // Source tile index
     source: Index,
+    // Target tile index
     target: Index,
+    // Player board orientation that the move is indexed from
+    player: Player,
 }
 
 impl Move {
-    pub fn new(source: Index, target: Index) -> Move {
-        Move { source, target }
+    pub fn new(source: Index, target: Index, player: Player) -> Move {
+        Move {
+            source,
+            target,
+            player,
+        }
     }
 }
 
