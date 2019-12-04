@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 
+use pad::{Alignment, PadStr};
 use regex::Regex;
 use std::char;
 use std::fmt;
@@ -24,8 +25,6 @@ const BOARD_BLACK: char = '●';
 const BOARD_WHITE_KING: char = '♔';
 const BOARD_BLACK_KING: char = '♚';
 
-const BOARD_SIZE: usize = 8;
-
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum Tile {
     Empty,
@@ -36,14 +35,6 @@ enum Tile {
 }
 
 fn main() {
-    // assert that board size is even vertically
-    assert_eq!(
-        BOARD_SIZE % 2,
-        0,
-        "Board vertical size cannot be odd! Got {}",
-        BOARD_SIZE
-    );
-
     println!("Note that your terminal may change pawn apperance, here is reference:");
     println!("  White man: {}", BOARD_WHITE);
     println!("  White king: {}", BOARD_WHITE_KING);
@@ -105,8 +96,8 @@ struct Board {
 }
 
 impl Board {
-    /// Create board with height x width size. You can flip the board to swap players
-    fn new(height: usize, width: usize, flip: bool) -> Board {
+    /// Create board with height x width size.
+    fn new(height: usize, width: usize) -> Board {
         // assert that board size is even vertically
         assert_eq!(
             height % 2,
@@ -116,8 +107,8 @@ impl Board {
         );
         let mut tiles = vec![Tile::Empty; height * width];
 
-        let top_tile = if flip { Tile::White } else { Tile::Black };
-        let bottom_tile = if flip { Tile::Black } else { Tile::White };
+        let top_tile = Tile::Black;
+        let bottom_tile = Tile::White;
 
         for y in 0..height {
             for x in 0..width {
@@ -202,38 +193,51 @@ impl Board {
 
     pub fn get_drawed_board(&self) -> String {
         let player = Player::White;
+        let vertical_index_digits = self.height.to_string().len();
+        let horizontal_padding = String::new().pad_to_width(vertical_index_digits);
 
         // todo: notation bars should be created based on board width
-        let horizontal_notation = format!("  ABCDEFGH  {}", NEWLINE);
+        let notation = (0..self.width)
+            .map(|i| char::from_u32((65 + i) as u32).expect("Unsupported width!"))
+            .collect::<String>();
+        let horizontal_notation = format!(
+            "{} {} {}{}",
+            horizontal_padding, notation, horizontal_padding, NEWLINE
+        );
 
         let mut top_border = String::new();
-        top_border.push(' ');
+        top_border.push_str(horizontal_padding.as_str());
         top_border.push(BORDER_TLC);
         for _ in 0..self.width() {
             top_border.push(BORDER_HORIZONTAL);
         }
         top_border.push(BORDER_TRC);
-        top_border.push(' ');
+        top_border.push_str(horizontal_padding.as_str());
         top_border.push(NEWLINE);
 
         let mut bottom_border = String::new();
-        bottom_border.push(' ');
+        bottom_border.push_str(horizontal_padding.as_str());
         bottom_border.push(BORDER_BLC);
         for _ in 0..self.width() {
             bottom_border.push(BORDER_HORIZONTAL);
         }
         bottom_border.push(BORDER_BRC);
-        bottom_border.push(' ');
+        bottom_border.push_str(horizontal_padding.as_str());
         bottom_border.push(NEWLINE);
 
         let mut printed_board = String::new();
 
         printed_board.push_str(&horizontal_notation);
         printed_board.push_str(&top_border);
+
         for y in 0..self.height {
             let mut middle_row = String::new();
 
-            middle_row.push(char::from_digit((y + 1) as u32, 10).unwrap());
+            let vertical_index = (y + 1)
+                .to_string()
+                .pad_to_width_with_alignment(vertical_index_digits, Alignment::Left);
+
+            middle_row.push_str(vertical_index.as_str());
             middle_row.push(BORDER_VERTICAL);
             for x in 0..self.width {
                 let tile = match self.get_tile(Index::new(x, y), player) {
@@ -247,7 +251,7 @@ impl Board {
                 middle_row.push(tile);
             }
             middle_row.push(BORDER_VERTICAL);
-            middle_row.push(char::from_digit((y + 1) as u32, 10).unwrap());
+            middle_row.push_str(vertical_index.as_str());
             middle_row.push(NEWLINE);
             printed_board.push_str(&middle_row);
         }
@@ -285,7 +289,7 @@ struct Game {
 impl Game {
     pub fn new() -> Game {
         Game {
-            board: Board::new(8, 8, false),
+            board: Board::new(10, 10),
             state: GameState::Turn(Player::Black),
         }
     }
