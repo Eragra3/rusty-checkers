@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 
+use colored::*;
 use pad::{Alignment, PadStr};
 use regex::Regex;
 use std::char;
@@ -20,10 +21,8 @@ const BORDER_VERTICAL: char = '│';
 const NEWLINE: char = '\n';
 
 const BOARD_EMPTY: char = ' ';
-const BOARD_WHITE: char = '○';
-const BOARD_BLACK: char = '●';
-const BOARD_WHITE_KING: char = '♔';
-const BOARD_BLACK_KING: char = '♚';
+const BOARD_MAN: char = '●';
+const BOARD_KING: char = '♚';
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 enum Tile {
@@ -35,14 +34,9 @@ enum Tile {
 }
 
 fn main() {
-    println!("Note that your terminal may change pawn apperance, here is reference:");
-    println!("  White man: {}", BOARD_WHITE);
-    println!("  White king: {}", BOARD_WHITE_KING);
-    println!("  Black man: {}", BOARD_BLACK);
-    println!("  Black king: {}", BOARD_BLACK_KING);
-    println!();
-
     let mut game = Game::new();
+
+    game.draw_info();
 
     loop {
         game.draw_board();
@@ -191,45 +185,51 @@ impl Board {
         self.set_tile_white(reversed_index, tile)
     }
 
+    // TODO: add some kind of theme support, the board still looks meh in some terminals
     pub fn get_drawed_board(&self) -> String {
-        let player = Player::White;
+        // number of digits in vertical numeric notation
         let vertical_index_digits = self.height.to_string().len();
-        let horizontal_padding = String::new().pad_to_width(vertical_index_digits);
+        // padding equal to vertical numeric notation width
+        let notation_padding = String::new().pad_to_width(vertical_index_digits);
 
-        // todo: notation bars should be created based on board width
-        let notation = (0..self.width)
+        // horizontal character notation
+        let horizontal_notation = (0..self.width)
             .map(|i| char::from_u32((65 + i) as u32).expect("Unsupported width!"))
             .collect::<String>();
-        let horizontal_notation = format!(
-            "{} {} {}{}",
-            horizontal_padding, notation, horizontal_padding, NEWLINE
+
+        let horizontal_notation_line = format!(
+            "{} {} {}",
+            notation_padding, horizontal_notation, notation_padding
         );
 
-        let mut top_border = String::new();
-        top_border.push_str(horizontal_padding.as_str());
-        top_border.push(BORDER_TLC);
-        for _ in 0..self.width() {
-            top_border.push(BORDER_HORIZONTAL);
-        }
-        top_border.push(BORDER_TRC);
-        top_border.push_str(horizontal_padding.as_str());
-        top_border.push(NEWLINE);
+        let top_border = format!(
+            "{}{}{}",
+            BORDER_TLC,
+            (0..self.width())
+                .map(|_| BORDER_HORIZONTAL)
+                .collect::<String>(),
+            BORDER_TRC,
+        )
+        .blue()
+        .on_white()
+        .to_string();
+        let top_border_line = format!("{}{}{}", notation_padding, top_border, notation_padding);
 
-        let mut bottom_border = String::new();
-        bottom_border.push_str(horizontal_padding.as_str());
-        bottom_border.push(BORDER_BLC);
-        for _ in 0..self.width() {
-            bottom_border.push(BORDER_HORIZONTAL);
-        }
-        bottom_border.push(BORDER_BRC);
-        bottom_border.push_str(horizontal_padding.as_str());
-        bottom_border.push(NEWLINE);
+        let bottom_border = format!(
+            "{}{}{}",
+            BORDER_BLC,
+            (0..self.width())
+                .map(|_| BORDER_HORIZONTAL)
+                .collect::<String>(),
+            BORDER_BRC,
+        )
+        .blue()
+        .on_white()
+        .to_string();
+        let bottom_border_line =
+            format!("{}{}{}", notation_padding, bottom_border, notation_padding);
 
-        let mut printed_board = String::new();
-
-        printed_board.push_str(&horizontal_notation);
-        printed_board.push_str(&top_border);
-
+        let mut middle_rows: Vec<String> = Vec::new();
         for y in 0..self.height {
             let mut middle_row = String::new();
 
@@ -238,27 +238,70 @@ impl Board {
                 .pad_to_width_with_alignment(vertical_index_digits, Alignment::Left);
 
             middle_row.push_str(vertical_index.as_str());
-            middle_row.push(BORDER_VERTICAL);
+            middle_row.push_str(&BORDER_VERTICAL.to_string().blue().on_white().to_string());
+
+            let mut tile_row = String::new();
             for x in 0..self.width {
-                let tile = match self.get_tile(Index::new(x, y), player) {
-                    Tile::Empty => BOARD_EMPTY,
-                    Tile::White => BOARD_WHITE,
-                    Tile::Black => BOARD_BLACK,
-                    Tile::WhiteKing => BOARD_WHITE_KING,
-                    Tile::BlackKing => BOARD_BLACK_KING,
+                let tile = match self.get_tile(Index::new(x, y), Player::White) {
+                    Tile::Empty => self.get_empty_space(),
+                    Tile::White => self.get_white_man(),
+                    Tile::Black => self.get_black_man(),
+                    Tile::WhiteKing => self.get_white_king(),
+                    Tile::BlackKing => self.get_black_king(),
                 };
-
-                middle_row.push(tile);
+                tile_row.push_str(&tile);
             }
-            middle_row.push(BORDER_VERTICAL);
-            middle_row.push_str(vertical_index.as_str());
-            middle_row.push(NEWLINE);
-            printed_board.push_str(&middle_row);
-        }
-        printed_board.push_str(&bottom_border);
-        printed_board.push_str(&horizontal_notation);
+            middle_row.push_str(&tile_row.on_blue().to_string());
 
-        printed_board
+            middle_row.push_str(&BORDER_VERTICAL.to_string().blue().on_white().to_string());
+            middle_row.push_str(&vertical_index);
+            middle_row.push(NEWLINE);
+            middle_rows.push(middle_row);
+        }
+
+        [
+            horizontal_notation_line.clone(),
+            self.get_newline(),
+            top_border_line,
+            self.get_newline(),
+            middle_rows.concat(),
+            bottom_border_line,
+            self.get_newline(),
+            horizontal_notation_line,
+            self.get_newline(),
+        ]
+        .concat()
+    }
+
+    pub fn draw_info(&self) {
+        println!("White man: {}", self.get_white_man());
+        println!("White king: {}", self.get_white_king());
+        println!("Black man: {}", self.get_black_man());
+        println!("Black king: {}", self.get_black_king());
+    }
+
+    fn get_white_man(&self) -> String {
+        BOARD_MAN.to_string().white().to_string()
+    }
+
+    fn get_black_man(&self) -> String {
+        BOARD_MAN.to_string().black().to_string()
+    }
+
+    fn get_white_king(&self) -> String {
+        BOARD_KING.to_string().white().to_string()
+    }
+
+    fn get_black_king(&self) -> String {
+        BOARD_KING.to_string().black().to_string()
+    }
+
+    fn get_empty_space(&self) -> String {
+        BOARD_EMPTY.to_string()
+    }
+
+    fn get_newline(&self) -> String {
+        NEWLINE.to_string()
     }
 }
 
@@ -460,6 +503,14 @@ impl Game {
         let x = self.board.width() - index.x - 1;
         let y = self.board.height() - index.y - 1;
         Index { x, y }
+    }
+
+    pub fn draw_info(&self) {
+        println!("Note that your terminal may change pawn and board apperance, here is reference:");
+
+        self.board.draw_info();
+
+        println!();
     }
 }
 
