@@ -56,6 +56,7 @@ fn main() {
     loop {
         game.draw_board();
 
+        println!("{:?}", game.state);
         print!("Make move: ");
         io::stdout().flush().expect("IO error");
         let mut move_description = String::new();
@@ -74,6 +75,28 @@ fn main() {
     }
 }
 
+/// Checkers board representation.
+///
+/// `get_tile_white` and `set_tile_white` give access to tiles from white player perspective.
+/// (0,0) point is in top-left corner:
+/// | (x, y)      |        |     |                 |
+/// | ----------- | ------ | --- | --------------- |
+/// | (0, 0)      | (1, 0) | ... | (width, 0)      |
+/// | (0, 1)      | (1, 1) |     |                 |
+/// | ...         |        | ... |                 |
+/// | (0, height) |        |     | (width, height) |
+///
+/// `get_tile_black` and `set_tile_black` give access to tiles from black player perspective.
+/// Reversed indexer has (0,0) point in bottom-right corner instead of top-left:
+/// | (x, y)          |     |        |             |
+/// | --------------- | --- | ------ | ----------- |
+/// | (width, height) |     |        | (0, height) |
+/// |                 | ... |        |             |
+/// |                 |     | (1, 1) | (0, 1)      |
+/// | (width, 0)      | ... | (1, 0) | (0, 0)      |
+///
+/// Methods `get_tile` and `set_tile` will pick correct board orientation based on player
+///
 #[derive(Debug)]
 struct Board {
     height: usize,
@@ -127,13 +150,6 @@ impl Board {
         }
     }
 
-    pub fn get_tile(&self, Index { x, y }: &Index) -> Tile {
-        assert!(*x < self.height, "X coordinate is outside board! Got {}", x);
-        assert!(*y < self.width, "Y coordinate is outside board! Got {}", y);
-
-        self.tiles[x + y * self.width]
-    }
-
     pub fn height(&self) -> usize {
         self.height
     }
@@ -142,14 +158,53 @@ impl Board {
         self.width
     }
 
-    pub fn set_tile(&mut self, Index { x, y }: &Index, tile: Tile) {
-        assert!(*x < self.height, "X coordinate is outside board! Got {}", x);
-        assert!(*y < self.width, "Y coordinate is outside board! Got {}", y);
+    pub fn get_tile(&self, index: Index, player: Player) -> Tile {
+        match player {
+            Player::White => self.get_tile_white(index),
+            Player::Black => self.get_tile_black(index),
+        }
+    }
+
+    pub fn set_tile(&mut self, index: Index, tile: Tile, player: Player) {
+        match player {
+            Player::White => self.set_tile_white(index, tile),
+            Player::Black => self.set_tile_black(index, tile),
+        }
+    }
+
+    /// Get title looking at board from white player perspective
+    pub fn get_tile_white(&self, Index { x, y }: Index) -> Tile {
+        assert!(x < self.height, "X coordinate is outside board! Got {}", x);
+        assert!(y < self.width, "Y coordinate is outside board! Got {}", y);
+
+        self.tiles[x + y * self.width]
+    }
+
+    /// Set title looking at board from white player perspective
+    pub fn set_tile_white(&mut self, Index { x, y }: Index, tile: Tile) {
+        assert!(x < self.height, "X coordinate is outside board! Got {}", x);
+        assert!(y < self.width, "Y coordinate is outside board! Got {}", y);
 
         self.tiles[x + y * self.width] = tile;
     }
 
+    /// Get title looking at board from black player perspective
+    pub fn get_tile_black(&self, Index { x, y }: Index) -> Tile {
+        let reversed_index = Index::new(self.width - x - 1, self.height - y - 1);
+        println!("Reversed index: {:?}", reversed_index);
+        self.get_tile_white(reversed_index)
+    }
+
+    /// Set title looking at board from black player perspective
+    pub fn set_tile_black(&mut self, Index { x, y }: Index, tile: Tile) {
+        let reversed_index = Index::new(self.width - x - 1, self.height - y - 1);
+        println!("Reversed index: {:?}", reversed_index);
+        self.set_tile_white(reversed_index, tile)
+    }
+
     pub fn get_drawed_board(&self) -> String {
+        let player = Player::White;
+
         // todo: notation bars should be created based on board width
         let horizontal_notation = format!("  ABCDEFGH  {}", NEWLINE);
 
@@ -183,7 +238,7 @@ impl Board {
             middle_row.push(char::from_digit((y + 1) as u32, 10).unwrap());
             middle_row.push(BORDER_VERTICAL);
             for x in 0..self.width {
-                let tile = match self.get_tile(&Index::new(x, y)) {
+                let tile = match self.get_tile(Index::new(x, y), player) {
                     Tile::Empty => BOARD_EMPTY,
                     Tile::White => BOARD_WHITE,
                     Tile::Black => BOARD_BLACK,
@@ -211,13 +266,13 @@ impl fmt::Display for Board {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum Player {
     White,
     Black,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum GameState {
     Turn(Player),
     Won(Player),
@@ -226,7 +281,6 @@ enum GameState {
 #[derive(Debug)]
 struct Game {
     board: Board,
-    turned_board: Board,
     state: GameState,
 }
 
@@ -234,7 +288,6 @@ impl Game {
     pub fn new() -> Game {
         Game {
             board: Board::new(8, 8, false),
-            turned_board: Board::new(8, 8, true),
             state: GameState::Turn(Player::Black),
         }
     }
@@ -250,15 +303,21 @@ impl Game {
             None => return false,
         };
 
-        if !self.check_move(&board_move) {
+        if !self.check_move(board_move) {
             return false;
         }
 
-        let pawn = self.board.get_tile(&board_move.source);
+        let player = match self.state {
+            GameState::Turn(Player::Black) => Player::Black,
+            GameState::Turn(Player::White) => Player::White,
+            _ => panic!("You can't make a move, the game has already ended!"),
+        };
+
+        let pawn = self.board.get_tile(board_move.source, player);
         // remove pawn from source
-        self.board.set_tile(&board_move.source, Tile::Empty);
+        self.board.set_tile(board_move.source, Tile::Empty, player);
         // put pawn in target
-        self.board.set_tile(&board_move.target, pawn);
+        self.board.set_tile(board_move.target, pawn, player);
 
         // change turn
         self.change_turn();
@@ -269,8 +328,7 @@ impl Game {
     fn change_turn(&mut self) {
         self.state = if self.state == GameState::Turn(Player::Black) {
             GameState::Turn(Player::White)
-        }
-        else {
+        } else {
             GameState::Turn(Player::Black)
         }
     }
@@ -305,43 +363,39 @@ impl Game {
         let target_horizontal_index = (target_letter as usize) - 65;
         let target_vertical_index = (target_number - 1) as usize;
 
-        Some(Move {
-            source: Index::new(source_horizontal_index, source_vertical_index),
-            target: Index::new(target_horizontal_index, target_vertical_index),
-        })
+        Some(Move::new(
+            Index::new(source_horizontal_index, source_vertical_index),
+            Index::new(target_horizontal_index, target_vertical_index),
+        ))
     }
 
     // todo: return specific errors instead of boolean
-    // todo: simplify calculation by using flipped board and using the same calculation for white player, but on
-    //       horizontally flipped board
-    pub fn check_move(&self, game_move: &Move) -> bool {
-
-        // we are using regular board for black player and 
-        let board = match self.state {
-            GameState::Turn(Player::Black) => &self.board,
-            GameState::Turn(Player::White) => &self.turned_board,
+    pub fn check_move(&self, game_move: Move) -> bool {
+        // we are using regular board for black player and
+        let player = match self.state {
+            GameState::Turn(Player::Black) => Player::Black,
+            GameState::Turn(Player::White) => Player::White,
             GameState::Won(_) => return false,
         };
 
         // check if source tile is a pawn
-        let source_tile = match board.get_tile(&game_move.source) {
+        let source_tile = match self.board.get_tile(game_move.source, player) {
             Tile::Empty => return false,
             tile => tile,
         };
 
         // check if current turn player is the owner
-        match self.state {
-            GameState::Turn(Player::Black) => {
+        match player {
+            Player::Black => {
                 if source_tile == Tile::White || source_tile == Tile::WhiteKing {
                     return false;
                 }
             }
-            GameState::Turn(Player::White) => {
+            Player::White => {
                 if source_tile == Tile::Black || source_tile == Tile::BlackKing {
                     return false;
                 }
             }
-            GameState::Won(_) => return false,
         }
 
         // check if it's crowned pawn (king)
@@ -352,22 +406,20 @@ impl Game {
             // man move
 
             // check if move is forward
-            match self.state {
-                GameState::Turn(Player::Black) => {
+            match player {
+                Player::Black => {
                     if game_move.source.y >= game_move.target.y {
                         return false;
                     }
                 }
-                GameState::Turn(Player::White) => {
+                Player::White => {
                     if game_move.source.y <= game_move.target.y {
                         return false;
                     }
                 }
-                _ => return false,
             }
 
             // check if it's a simple move or jump
-            
 
             if false {
                 // todo simple move
@@ -388,7 +440,7 @@ impl Game {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Move {
     source: Index,
     target: Index,
@@ -400,7 +452,7 @@ impl Move {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct Index {
     x: usize,
     y: usize,
@@ -410,13 +462,5 @@ impl Index {
     /// Create new index, x is horizontal index, y is vertical. Indeces are 0-based
     pub fn new(x: usize, y: usize) -> Index {
         Index { x, y }
-    }
-}
-
-trait Indexer2D {
-    type Item;
-
-    fn get_item(index: &Index) -> &Self::Item {
-        unimplemented!();
     }
 }
