@@ -65,7 +65,7 @@ fn main() {
             Err(e) => panic!("{}", e),
         }
         let success = game.make_move(&move_description);
-        println!("Moved? {}", success);
+        println!("Moved? {:?}", success);
 
         if game.state == GameState::Won(Player::White) {
             println!("White won!");
@@ -189,16 +189,16 @@ impl Board {
     }
 
     /// Get title looking at board from black player perspective
-    pub fn get_tile_black(&self, Index { x, y }: Index) -> Tile {
-        let reversed_index = Index::new(self.width - x - 1, self.height - y - 1);
-        println!("Reversed index: {:?}", reversed_index);
+    pub fn get_tile_black(&self, index: Index) -> Tile {
+        let reversed_index = Index::new(self.width - index.x - 1, self.height - index.y - 1);
+        println!("Index: {:?}, Reversed index: {:?}", index, reversed_index);
         self.get_tile_white(reversed_index)
     }
 
     /// Set title looking at board from black player perspective
-    pub fn set_tile_black(&mut self, Index { x, y }: Index, tile: Tile) {
-        let reversed_index = Index::new(self.width - x - 1, self.height - y - 1);
-        println!("Reversed index: {:?}", reversed_index);
+    pub fn set_tile_black(&mut self, index: Index, tile: Tile) {
+        let reversed_index = Index::new(self.width - index.x - 1, self.height - index.y - 1);
+        println!("Index: {:?}, Reversed index: {:?}", index, reversed_index);
         self.set_tile_white(reversed_index, tile)
     }
 
@@ -297,32 +297,30 @@ impl Game {
     /// `A6 B5` or `B1 C2`
     ///
     // todo: implement
-    pub fn make_move(&mut self, description: &str) -> bool {
+    pub fn make_move(&mut self, description: &str) -> Result<(), &str> {
+        if let GameState::Won(_) = self.state {
+            return Err("You can't make a move, the game has already ended");
+        };
+
         let board_move = match self.parse_move_description(description) {
             Some(m) => m,
-            None => return false,
+            None => return Err("Move description is not well formed"),
         };
 
-        if !self.check_move(board_move) {
-            return false;
+        if let err @ Err(_) = self.check_move(board_move) {
+            return err;
         }
 
-        let player = match self.state {
-            GameState::Turn(Player::Black) => Player::Black,
-            GameState::Turn(Player::White) => Player::White,
-            _ => panic!("You can't make a move, the game has already ended!"),
-        };
-
-        let pawn = self.board.get_tile(board_move.source, player);
+        let pawn = self.board.get_tile_white(board_move.source);
         // remove pawn from source
-        self.board.set_tile(board_move.source, Tile::Empty, player);
+        self.board.set_tile_white(board_move.source, Tile::Empty);
         // put pawn in target
-        self.board.set_tile(board_move.target, pawn, player);
+        self.board.set_tile_white(board_move.target, pawn);
 
         // change turn
         self.change_turn();
 
-        true
+        Ok(())
     }
 
     fn change_turn(&mut self) {
@@ -333,6 +331,10 @@ impl Game {
         }
     }
 
+    /// Parses move notation to an Index:
+    /// Ex. `A6 B5` or `B1 C2`.
+    ///
+    /// The move is indexed from white player perspective.
     fn parse_move_description(&self, description: &str) -> Option<Move> {
         lazy_static! {
             static ref ALGEBRAIC_NOTATION_REGEX: Regex =
@@ -363,37 +365,49 @@ impl Game {
         let target_horizontal_index = (target_letter as usize) - 65;
         let target_vertical_index = (target_number - 1) as usize;
 
-        Some(Move::new(
+        let game_move = Move::new(
             Index::new(source_horizontal_index, source_vertical_index),
             Index::new(target_horizontal_index, target_vertical_index),
-        ))
+        );
+
+        Some(game_move)
     }
 
-    // todo: return specific errors instead of boolean
-    pub fn check_move(&self, game_move: Move) -> bool {
-        // we are using regular board for black player and
+    pub fn check_move<'a>(&self, game_move_white: Move) -> Result<(), &'a str> {
         let player = match self.state {
             GameState::Turn(Player::Black) => Player::Black,
             GameState::Turn(Player::White) => Player::White,
-            GameState::Won(_) => return false,
+            GameState::Won(_) => return Err("The game is already finished"),
         };
+
+        let game_move = match player {
+            Player::Black => self.reverse_move(&game_move_white),
+            Player::White => game_move_white,
+        };
+
+        println!("Move: {:?}", game_move);
 
         // check if source tile is a pawn
         let source_tile = match self.board.get_tile(game_move.source, player) {
-            Tile::Empty => return false,
+            Tile::Empty => return Err("Source tile is empty"),
             tile => tile,
+        };
+        // check if target tile is empty
+        match self.board.get_tile(game_move.target, player) {
+            Tile::Empty => (),
+            _ => return Err("Target tile is not empty"),
         };
 
         // check if current turn player is the owner
         match player {
             Player::Black => {
                 if source_tile == Tile::White || source_tile == Tile::WhiteKing {
-                    return false;
+                    return Err("The pawn belongs to other player (white)");
                 }
             }
             Player::White => {
                 if source_tile == Tile::Black || source_tile == Tile::BlackKing {
-                    return false;
+                    return Err("The pawn belongs to other player (black)");
                 }
             }
         }
@@ -406,17 +420,8 @@ impl Game {
             // man move
 
             // check if move is forward
-            match player {
-                Player::Black => {
-                    if game_move.source.y >= game_move.target.y {
-                        return false;
-                    }
-                }
-                Player::White => {
-                    if game_move.source.y <= game_move.target.y {
-                        return false;
-                    }
-                }
+            if game_move.source.y <= game_move.target.y {
+                return Err("The move has to be forward");
             }
 
             // check if it's a simple move or jump
@@ -430,7 +435,7 @@ impl Game {
             //     // invalid move
             //     return false;
         }
-        true
+        Ok(())
     }
 
     pub fn draw_board(&self) {
@@ -438,8 +443,21 @@ impl Game {
 
         println!("{}", board);
     }
+
+    fn reverse_move(&self, game_move: &Move) -> Move {
+        let source = self.reverse_index(&game_move.source);
+        let target = self.reverse_index(&game_move.target);
+        Move { source, target }
+    }
+
+    fn reverse_index(&self, index: &Index) -> Index {
+        let x = self.board.width() - index.x - 1;
+        let y = self.board.height() - index.y - 1;
+        Index { x, y }
+    }
 }
 
+//TODO: move `player` to this structure and remove it as method parameter
 #[derive(Debug, Clone, Copy)]
 struct Move {
     source: Index,
